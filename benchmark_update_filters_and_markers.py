@@ -66,12 +66,7 @@ PROJ_START_VERRA_GS     = "Crediting_Period_Start_Date" # Example name
 # Tell the AI: "Change FILTERS_TO_TEST to an empty dictionary to test the baseline."
 # Or: "Add a 'search' key with value 'reforestation' to FILTERS_TO_TEST."
 FILTERS_TO_TEST = {
-    'sources': ['verra', 'goldstandard'],
-    'countries': ['Brazil', 'India', 'Indonesia'],
-    'project_types': ['Afforestation/Reforestation'],
-    'search': 'forest',
-    'start_year': 2015,
-    'end_year': 2022
+    'sources': ['Verra', 'GoldStandard'],
 }
 
 
