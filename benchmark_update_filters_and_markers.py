@@ -1,163 +1,262 @@
 #!/usr/bin/env python3
 """
-benchmark_update_filters_and_markers.py
---------------------------------------
-Standalone benchmark harness for the most expensive part of
-`/update_filters_and_markers` in GlobalRegistryFINAL.
+Standalone Benchmark Harness for 'update_filters_and_markers'
 
-• Runs the main SQL + marker/count post-processing outside Flask.
-• Prints timings so you can adjust parameters (batch size, PRAGMA tweaks,
-  pre-built indexes, etc.) and immediately see the impact.
-• Optional sweep mode to compare several batch sizes in one run.
+This script is a self-contained testbed designed for performance optimization,
+particularly through interaction with an AI code assistant like OpenAI Codex.
 
-USAGE
-=====
+PURPOSE:
+To provide a simple, editable, and runnable environment that isolates the
+core logic of the `update_filters_and_markers` endpoint. An AI can be
+instructed to modify this file to test performance hypotheses.
 
-# single run (default DB_FETCH_BATCH_SIZE = 16 384)
-python benchmark_update_filters_and_markers.py --db ./mydatabase.db
+HOW TO USE WITH AN AI:
+1. Provide the entire script to the AI as context.
+2. Instruct the AI to modify a specific part of the code.
+   - "Modify the FILTERS_TO_TEST dictionary to simulate a complex search."
+   - "In PRAGMA_SCRIPT_RO, change the cache_size to -262144 and remove mmap_size."
+   - "Rewrite the processing loop in `run_full_benchmark` to be more efficient."
+3. Run the modified script from your terminal and observe the change in timings.
 
-# sweep several batch sizes
-python benchmark_update_filters_and_markers.py --db ./mydatabase.db --test-batch-sizes 4096 8192 16384 32768
+Example command to run:
+python benchmark_script.py --db ./path/to/your/database.db
 """
 from __future__ import annotations
-import argparse, os, sqlite3, timeit, random, json, sys
-from typing import Any, Dict, List, Tuple
+import argparse
+import os
+import sqlite3
+import timeit
+import random
+from collections import defaultdict
+import sys
 
-# --------------------------------------------------------------------------- #
-#   SECTION 1 – constants you might want to play with                         #
-# --------------------------------------------------------------------------- #
-DB_FETCH_BATCH_SIZE_DEFAULT = 16_384
+# =========================================================================== #
+# SECTION 1: CONFIGURATION (Primary target for AI modifications)
+#
+# Instruct the AI to change these values to test different scenarios.
+# =========================================================================== #
 
-PRAGMA_SCRIPT = """
-PRAGMA query_only   = TRUE;
-PRAGMA journal_mode = OFF;
-PRAGMA synchronous  = OFF;
-PRAGMA temp_store   = MEMORY;
-PRAGMA cache_size   = -196608;     /* target ~192 MB */
-PRAGMA mmap_size    = 268435456;   /* 256 MB */
+# --- Database Fetch Size ---
+# Tell the AI: "Set DB_FETCH_BATCH_SIZE to 8192 and run the benchmark."
+DB_FETCH_BATCH_SIZE = 16384
+
+# --- Database PRAGMA Settings ---
+# Tell the AI: "Modify the PRAGMA_SCRIPT_RO to set journal_mode to WAL."
+PRAGMA_SCRIPT_RO = """
+    PRAGMA query_only     = TRUE;
+    PRAGMA journal_mode   = OFF;
+    PRAGMA synchronous    = OFF;
+    PRAGMA temp_store     = MEMORY;
+    PRAGMA cache_size     = -196608;      /* target ~192 MB */
+    PRAGMA mmap_size      = 268435456;   /* target 256 MB */
 """
 
-# columns used by the live route – change only if your schema differs
-PROJECT_TABLE_NAME     = "mytable"
-PROJ_GEO               = "geolocation"
-PROJ_EMISSIONS         = "Estimated_Annual_Emission_Reductions"
-PROJ_ID                = "Project_ID"
-PROJ_TYPE              = "Project_Type"
-PROJ_SOURCE            = "SourceDB"
-PROJ_COUNTRY           = "Country"
+# --- Table and Column Names (Must match your schema) ---
+PROJECT_TABLE_NAME      = "mytable"
+PROJ_ID                 = "Project_ID"
+PROJ_NAME               = "Project_Name" # Needed for search
+PROJ_TYPE               = "Project_Type"
+PROJ_SOURCE             = "SourceDB"
+PROJ_COUNTRY            = "Country"
+PROJ_GEO                = "geolocation"
+PROJ_EMISSIONS          = "Estimated_Annual_Emission_Reductions"
+PROJ_START_VERRA_GS     = "Crediting_Period_Start_Date" # Example name
 
-ESSENTIAL_COLUMNS_FOR_MARKER_QUERY = [
-    PROJ_GEO, PROJ_EMISSIONS, PROJ_ID, PROJ_TYPE,
-    PROJ_SOURCE, PROJ_COUNTRY,
-]
+# --- Filters to Simulate a User Request ---
+# Tell the AI: "Change FILTERS_TO_TEST to an empty dictionary to test the baseline."
+# Or: "Add a 'search' key with value 'reforestation' to FILTERS_TO_TEST."
+FILTERS_TO_TEST = {
+    'sources': ['verra', 'goldstandard'],
+    'countries': ['Brazil', 'India', 'Indonesia'],
+    'project_types': ['Afforestation/Reforestation'],
+    'search': 'forest',
+    'start_year': 2015,
+    'end_year': 2022
+}
 
-# --------------------------------------------------------------------------- #
-#   SECTION 2 – DB helpers                                                    #
-# --------------------------------------------------------------------------- #
-def get_db(db_path: str) -> sqlite3.Connection:
+
+# =========================================================================== #
+# SECTION 2: CORE LOGIC (Copied from application for realistic testing)
+#
+# The AI can be asked to optimize or rewrite these functions.
+# =========================================================================== #
+
+def get_db(db_path: str, pragma_script: str) -> sqlite3.Connection:
+    """Establishes a read-only database connection with specified PRAGMAs."""
     if not os.path.exists(db_path):
-        sys.exit(f"DB not found: {db_path}")
-    uri = f"file:{db_path}?mode=ro&immutable=1"
-    conn = sqlite3.connect(uri, uri=True, timeout=15.0, check_same_thread=False)
-    conn.executescript(PRAGMA_SCRIPT)
-    conn.row_factory = None  # raw tuples – fastest
+        sys.exit(f"ERROR: Database file not found at '{db_path}'")
+    db_uri = f"file:{db_path}?mode=ro&immutable=1"
+    conn = sqlite3.connect(db_uri, uri=True, timeout=15.0)
+    conn.executescript(pragma_script)
+    conn.row_factory = None  # Use raw tuples for maximum performance
     return conn
 
-# --------------------------------------------------------------------------- #
-#   SECTION 3 – minimal marker factory copied from the production route       #
-# --------------------------------------------------------------------------- #
+def build_filter_query(filters: dict) -> tuple[str, list]:
+    """
+    Builds a SQL query from a filter dictionary. This is a simplified but
+    representative version of the production query builder.
+    """
+    base_query = f"SELECT * FROM `{PROJECT_TABLE_NAME}`"
+    where_conditions = []
+    params = []
+
+    if sources := filters.get('sources'):
+        placeholders = ','.join(['?'] * len(sources))
+        where_conditions.append(f"`{PROJ_SOURCE}` IN ({placeholders}) COLLATE NOCASE")
+        params.extend(sources)
+
+    if countries := filters.get('countries'):
+        placeholders = ','.join(['?'] * len(countries))
+        where_conditions.append(f"`{PROJ_COUNTRY}` IN ({placeholders}) COLLATE NOCASE")
+        params.extend(countries)
+        
+    if types := filters.get('project_types'):
+        placeholders = ','.join(['?'] * len(types))
+        where_conditions.append(f"`{PROJ_TYPE}` IN ({placeholders}) COLLATE NOCASE")
+        params.extend(types)
+
+    if search_term := filters.get('search'):
+        like_pattern = f"%{search_term}%"
+        searchable_columns = [PROJ_ID, PROJ_NAME, PROJ_TYPE, PROJ_COUNTRY]
+        search_clauses = " OR ".join([f"`{c}` LIKE ? COLLATE NOCASE" for c in searchable_columns if c])
+        where_conditions.append(f"({search_clauses})")
+        params.extend([like_pattern] * len(searchable_columns))
+
+    if start_year := filters.get('start_year'):
+        if end_year := filters.get('end_year'):
+            if PROJ_START_VERRA_GS:
+                condition = f"CAST(substr(trim(`{PROJ_START_VERRA_GS}`), 1, 4) AS INTEGER) BETWEEN ? AND ?"
+                where_conditions.append(condition)
+                params.extend([start_year, end_year])
+
+    final_query = base_query
+    if where_conditions:
+        final_query += " WHERE " + " AND ".join(where_conditions)
+    
+    return final_query, params
+
 def _radius(e: float) -> float:
+    """Helper function to calculate marker radius based on emissions."""
     if e < 51_126: return 10.0
     if e < 235_483.5677: return 16.67
     if e < 1_212_860.6667: return 23.33
     return 40.0
 
-def create_marker_data(row: Tuple[Any, ...], col_idx: Dict[str, int]) -> Dict[str, Any] | None:
+def create_marker_data(row: tuple, col_idx: dict) -> dict | None:
+    """Creates a marker dictionary from a database row tuple."""
     try:
         geo = row[col_idx[PROJ_GEO]]
         if not geo or "," not in geo: return None
         emis_val = row[col_idx[PROJ_EMISSIONS]]
-        pid      = row[col_idx[PROJ_ID]]
-        ptype    = row[col_idx[PROJ_TYPE]]
-        if emis_val is None or pid is None: return None
+        if emis_val is None: return None
 
         lat_str, lon_str = geo.split(",", 1)
-        lat = float(lat_str) + random.uniform(-1e-4, 1e-4)
-        lon = float(lon_str) + random.uniform(-1e-4, 1e-4)
-        radius = _radius(float(emis_val))
-
         return {
-            "lat": lat, "lon": lon, "radius": radius,
-            "project_id": pid, "project_type": ptype,
+            "lat": float(lat_str) + random.uniform(-1e-4, 1e-4),
+            "lon": float(lon_str) + random.uniform(-1e-4, 1e-4),
+            "radius": _radius(float(emis_val)),
+            "project_id": row[col_idx[PROJ_ID]],
+            "project_type": row[col_idx[PROJ_TYPE]],
         }
-    except Exception:
+    except (ValueError, TypeError, KeyError, IndexError):
         return None
 
-# --------------------------------------------------------------------------- #
-#   SECTION 4 – core benchmark                                                #
-# --------------------------------------------------------------------------- #
-def run_benchmark(db_path: str,
-                  batch_size: int = DB_FETCH_BATCH_SIZE_DEFAULT,
-                  filters: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    filters = filters or {}
-    select_cols_sql = ", ".join(f"`{c}`" for c in ESSENTIAL_COLUMNS_FOR_MARKER_QUERY)
-    where_clause    = ""  # pass empty filters for worst-case baseline
-    params: List[Any] = []
+# =========================================================================== #
+# SECTION 3: BENCHMARK EXECUTION
+# =========================================================================== #
 
-    sql = f"SELECT {select_cols_sql} FROM `{PROJECT_TABLE_NAME}` {where_clause}"
+def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filters: dict):
+    """
+    Executes the full benchmark process:
+    1. Connects to the DB.
+    2. Builds and executes the SQL query.
+    3. Fetches and processes all results in batches.
+    4. Prints a summary of timings and results.
+    """
+    print("--- Starting Benchmark ---")
+    print(f"Database: {db_path}")
+    print(f"Batch Size: {batch_size}")
+    print(f"Filters: {filters if filters else 'None'}")
+    print("-" * 28)
 
-    conn   = get_db(db_path)
+    # --- Setup and Query Execution ---
+    conn = get_db(db_path, pragma_script)
     cursor = conn.cursor()
     cursor.arraysize = batch_size
 
-    times: Dict[str, float] = {}
+    sql_query, params = build_filter_query(filters)
+    
     t0 = timeit.default_timer()
-    cursor.execute(sql, params)
-    times["main_query_execution"] = timeit.default_timer() - t0
+    cursor.execute(sql_query, params)
+    query_execution_time = timeit.default_timer() - t0
 
-    # precompute indexes once
+    # --- Data Fetching and Processing ---
     col_names = tuple(desc[0] for desc in cursor.description)
-    col_idx   = {name: i for i, name in enumerate(col_names)}
+    col_idx = {name: i for i, name in enumerate(col_names)}
 
-    markers: List[Dict[str, Any]] = []
+    source_idx = col_idx.get(PROJ_SOURCE)
+    type_idx = col_idx.get(PROJ_TYPE)
+    country_idx = col_idx.get(PROJ_COUNTRY)
+
+    markers = []
+    source_counts = defaultdict(int)
+    project_type_counts = defaultdict(int)
+    country_counts = defaultdict(int)
+    total_rows_fetched = 0
+
     t0 = timeit.default_timer()
-    fetch = cursor.fetchmany
-    extend = markers.extend
     while True:
-        chunk = fetch(batch_size)
-        if not chunk:
+        rows_batch = cursor.fetchmany(batch_size)
+        if not rows_batch:
             break
-        batch = [m for m in (create_marker_data(r, col_idx) for r in chunk) if m]
-        extend(batch)
-    times["marker_and_count_processing"] = timeit.default_timer() - t0
-    times["total"] = sum(times.values())
-    times["markers"] = len(markers)
+        
+        total_rows_fetched += len(rows_batch)
+        for row in rows_batch:
+            marker = create_marker_data(row, col_idx)
+            if marker:
+                markers.append(marker)
+            
+            if source_idx is not None and (val := row[source_idx]):
+                source_counts[val] += 1
+            if type_idx is not None and (val := row[type_idx]):
+                project_type_counts[val] += 1
+            if country_idx is not None and (val := row[country_idx]):
+                country_counts[val] += 1
+    
+    processing_time = timeit.default_timer() - t0
     conn.close()
-    return times
 
-# --------------------------------------------------------------------------- #
-#   SECTION 5 – CLI / sweep                                                   #
-# --------------------------------------------------------------------------- #
-def main() -> None:
-    ap = argparse.ArgumentParser(
-        description="Benchmark for /update_filters_and_markers hot-path"
-    )
-    ap.add_argument("--db", required=True,
-                    help="Path to SQLite database (read-only)")
-    ap.add_argument("--batch-size", type=int, default=DB_FETCH_BATCH_SIZE_DEFAULT,
-                    help="DB_FETCH_BATCH_SIZE to test (ignored if --test-batch-sizes given)")
-    ap.add_argument("--test-batch-sizes", nargs="+", type=int,
-                    help="Run a sweep of batch sizes (e.g. 4096 8192 16384)")
-    args = ap.parse_args()
+    # --- Print Results ---
+    total_time = query_execution_time + processing_time
+    print("--- Results ---")
+    print(f"Query Execution Time:   {query_execution_time:.6f} s")
+    print(f"Data Processing Time:     {processing_time:.6f} s")
+    print(f"Total Time:               {total_time:.6f} s")
+    print("-" * 28)
+    print(f"Total Rows Fetched:       {total_rows_fetched}")
+    print(f"Markers Created:          {len(markers)}")
+    print(f"Unique Sources Found:     {len(source_counts)}")
+    print(f"Unique Project Types:     {len(project_type_counts)}")
+    print(f"Unique Countries Found:   {len(country_counts)}")
+    print("--- Benchmark Finished ---\n")
 
-    batch_sizes = args.test_batch_sizes or [args.batch_size]
-
-    print("batch_size\tmain_query_s\tproc_s\ttotal_s\tmarkers")
-    for bs in batch_sizes:
-        res = run_benchmark(args.db, batch_size=bs)
-        print(f"{bs}\t{res['main_query_execution']:.6f}\t"
-              f"{res['marker_and_count_processing']:.6f}\t"
-              f"{res['total']:.6f}\t{res['markers']}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Run a benchmark test for the 'update_filters_and_markers' logic.",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        "--db",
+        required=True,
+        help="Path to the SQLite database file."
+    )
+    args = parser.parse_args()
+
+    # Execute the benchmark using the configurations from Section 1
+    run_full_benchmark(
+        db_path=args.db,
+        pragma_script=PRAGMA_SCRIPT_RO,
+        batch_size=DB_FETCH_BATCH_SIZE,
+        filters=FILTERS_TO_TEST
+    )
