@@ -194,24 +194,33 @@ def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filter
     country_idx = col_idx.get(PROJ_COUNTRY)
 
     markers = []
+    source_counts = {}
+    project_type_counts = {}
+    country_counts = {}
     total_rows_fetched = 0
 
     t0 = timeit.default_timer()
-    rows = cursor.fetchall()
-    total_rows_fetched = len(rows)
-    markers = [m for m in (create_marker_data(r, col_idx) for r in rows) if m]
-    if source_idx is not None:
-        source_counts = Counter(r[source_idx] for r in rows if r[source_idx])
-    else:
-        source_counts = Counter()
-    if type_idx is not None:
-        project_type_counts = Counter(r[type_idx] for r in rows if r[type_idx])
-    else:
-        project_type_counts = Counter()
-    if country_idx is not None:
-        country_counts = Counter(r[country_idx] for r in rows if r[country_idx])
-    else:
-        country_counts = Counter()
+    sc = source_counts
+    tc = project_type_counts
+    cc = country_counts
+    append_marker = markers.append
+    for row in cursor:
+        total_rows_fetched += 1
+        if source_idx is not None:
+            src = row[source_idx]
+            if src:
+                sc[src] = sc.get(src, 0) + 1
+        if type_idx is not None:
+            t = row[type_idx]
+            if t:
+                tc[t] = tc.get(t, 0) + 1
+        if country_idx is not None:
+            c = row[country_idx]
+            if c:
+                cc[c] = cc.get(c, 0) + 1
+        m = create_marker_data(row, col_idx)
+        if m:
+            append_marker(m)
     
     processing_time = timeit.default_timer() - t0
     conn.close()

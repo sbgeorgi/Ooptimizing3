@@ -28,3 +28,32 @@ Hypothesis 2 (WAL mode) time: 0.1437234
 Hypothesis 3 (radius cache) time: 0.1442892
 Hypothesis 4 (prealloc markers) time: 0.15892
 No improvement over champion time 0.135993.
+
+--- Tournament 2 Start ---
+Generation 0:
+New Baseline Champion: champion_code.py
+Average Time: 0.1570246
+
+Generation 1:
+Hypothesis 1 (simplify create_marker_data) time: 0.1421985
+Hypothesis 2 (streaming loop) time: 0.1254175  <-- New champion
+Hypothesis 3 (multiprocessing) time: 2.0221594
+Hypothesis 4 (numpy vectorization) time: 0.164743
+Hypothesis 5 (single-pass fetchall) time: 0.1441698
+Champion average total time after Gen1: 0.1254175
+
+Generation 2:
+Hypothesis 1 (index params) time: 0.1259812
+Hypothesis 2 (radius cache) time: 0.1345284
+Hypothesis 3 (Numba radius) time: 0.4038748
+Hypothesis 4 (remove jitter) time: 0.1253703
+Hypothesis 5 (loop unrolling) time: 0.1252918  <-- New champion
+Champion average total time after Gen2: 0.1252918
+
+Generation 3:
+Hypothesis 1 (geo caching) time: 0.1418101
+Hypothesis 2 (fetchone loop) time: 0.1260549
+Hypothesis 3 (multiprocessing) time: 2.0599165
+Hypothesis 4 (bisect radius) time: 0.1277665
+Hypothesis 5 (dict counters) time: 0.122084  <-- New champion
+Champion average total time after Gen3: 0.122084
