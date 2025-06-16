@@ -1,0 +1,30 @@
+Generation 0:
+Baseline average total time: 0.1476438 seconds
+
+Generation 1:
+Hypothesis 1 time: 0.1443195
+Hypothesis 2 time: 0.1459652
+Hypothesis 3 time: 0.1466817
+Hypothesis 4 (Numba radius) time: 0.4265214
+Hypothesis 5 (fetchall) time: 0.1411159  <-- New champion
+
+Generation 2:
+Hypothesis 1 (row factory) time: 0.1451471
+Hypothesis 2 (numpy radius array) time: 0.1641804
+Hypothesis 3 (Counter counts) time: 0.1376435  <-- New champion
+Hypothesis 4 (ThreadPool) time: 0.3134934
+Hypothesis 5 (geolocation cache) time: 0.1441167
+Champion average total time after Gen2: 0.135993
+
+Generation 3:
+Hypothesis 1 (numpy radii) time: 0.1572825
+Hypothesis 2 (Numba jit) time: 0.4420486
+Hypothesis 3 (SQL counts) invalid
+No improvement over champion time 0.135993.
+
+Generation 4:
+Hypothesis 1 (batch size 32768) time: 0.1442056
+Hypothesis 2 (WAL mode) time: 0.1437234
+Hypothesis 3 (radius cache) time: 0.1442892
+Hypothesis 4 (prealloc markers) time: 0.15892
+No improvement over champion time 0.135993.
