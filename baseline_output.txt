@@ -1,0 +1,17 @@
+--- Starting Benchmark ---
+Database: mydatabase.db
+Batch Size: 16384
+Filters: {'sources': ['Verra', 'GoldStandard']}
+----------------------------
+--- Results ---
+Query Execution Time:   0.000448 s
+Data Processing Time:     0.203876 s
+Total Time:               0.204324 s
+----------------------------
+Total Rows Fetched:       8321
+Markers Created:          8302
+Unique Sources Found:     2
+Unique Project Types:     67
+Unique Countries Found:   152
+--- Benchmark Finished ---
+
