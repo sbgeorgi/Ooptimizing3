@@ -57,3 +57,15 @@ Hypothesis 3 (multiprocessing) time: 2.0599165
 Hypothesis 4 (bisect radius) time: 0.1277665
 Hypothesis 5 (dict counters) time: 0.122084  <-- New champion
 Champion average total time after Gen3: 0.122084
+Generated code
+--- Tournament 2 Start ---
+Generation 0:
+New Baseline Champion: champion_code.py
+Average Time: 0.0834114
+Generation 1:
+Hypothesis 1 (lru_cache radius) time: 0.0848716
+Hypothesis 2 (multiprocessing) time: 0.1588668
+Hypothesis 3 (numba jit) time: 0.5865584
+Hypothesis 4 (tuple markers) time: 0.0889705
+Hypothesis 5 (numpy vectorization) time: 0.0288453  <-- New champion
+Champion average total time after Gen1: 0.0288453

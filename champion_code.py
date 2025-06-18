@@ -12,6 +12,7 @@ import os
 import sqlite3
 import timeit
 import random
+import numpy as np
 from collections import defaultdict, Counter # Kept for potential future hypotheses
 import sys
 
@@ -117,76 +118,72 @@ def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filter
     cursor.execute(sql_query, params)
     query_execution_time = timeit.default_timer() - t0
 
-    # --- Data Fetching and Processing (FULLY OPTIMIZED) ---
+    # --- Data Fetching and Processing with NumPy vectorization ---
     col_names = tuple(desc[0] for desc in cursor.description)
     col_idx = {name: i for i, name in enumerate(col_names)}
 
-    markers = []
+    rows = cursor.fetchall()
+    total_rows_fetched = len(rows)
+
     source_counts = {}
     project_type_counts = {}
     country_counts = {}
-    total_rows_fetched = 0
 
-    t0_processing = timeit.default_timer()
+    lat_list = []
+    lon_list = []
+    emis_list = []
+    id_list = []
+    type_list = []
 
-    # Cache methods and values outside the hot loop
-    append_marker = markers.append
-    rand = random.random
-    
-    # Pre-compute indices to avoid dict lookups inside the loop
     source_idx = col_idx.get(PROJ_SOURCE)
     type_idx = col_idx.get(PROJ_TYPE)
     country_idx = col_idx.get(PROJ_COUNTRY)
     geo_idx = col_idx.get(PROJ_GEO)
     emis_idx = col_idx.get(PROJ_EMISSIONS)
     id_idx = col_idx.get(PROJ_ID)
-    
-    for row in cursor:
-        total_rows_fetched += 1
-        
-        # --- START: Inlined create_marker_data logic ---
-        # This structure mirrors the final, stable production code.
+
+    t0_processing = timeit.default_timer()
+
+    for row in rows:
+        geolocation = row[geo_idx]
+        emissions_val = row[emis_idx]
+        if not (geolocation and ',' in geolocation):
+            continue
+        if emissions_val is None:
+            continue
         try:
-            geolocation = row[geo_idx]
-            emissions_val = row[emis_idx]
+            lat_str, _, lon_str = geolocation.partition(',')
+            emis = float(emissions_val)
+            lat_list.append(float(lat_str))
+            lon_list.append(float(lon_str))
+            emis_list.append(emis)
+            id_list.append(row[id_idx])
+            type_list.append(row[type_idx])
+        except (ValueError, TypeError):
+            continue
 
-            # Basic validation
-            if not (geolocation and ',' in geolocation):
-                # Skip counting for this row if it can't be a marker
-                continue
-            if emissions_val is None:
-                continue
-
-            # This try-except is crucial for handling non-numeric data
-            emissions_float = float(emissions_val)
-            
-            # Core marker creation logic
-            lat_str, _, lon_str = geolocation.partition(',') # Faster than split
-            jitter = rand() * 2e-4 - 1e-4             # Faster than uniform
-            
-            # The structure must match what run_and_validate.py expects
-            append_marker({
-                'lat': float(lat_str) + jitter,
-                'lon': float(lon_str) + jitter,
-                'radius': _radius(emissions_float),
-                'project_id': row[id_idx],
-                'project_type': row[type_idx],
-            })
-        except (ValueError, TypeError, KeyError, IndexError):
-            # Safely skip any row that causes a data processing error
-            pass
-        # --- END: Inlined logic ---
-
-        # Perform counting using the original, functional dict .get() pattern.
         if source_idx is not None and (val := row[source_idx]):
             source_counts[val] = source_counts.get(val, 0) + 1
-        
         if type_idx is not None and (val := row[type_idx]):
             project_type_counts[val] = project_type_counts.get(val, 0) + 1
-        
         if country_idx is not None and (val := row[country_idx]):
             country_counts[val] = country_counts.get(val, 0) + 1
-    
+
+    lat_arr = np.array(lat_list)
+    lon_arr = np.array(lon_list)
+    emis_arr = np.array(emis_list)
+    jitter = np.random.random(len(lat_arr)) * 2e-4 - 1e-4
+    lat_arr += jitter
+    lon_arr += jitter
+
+    radius_arr = np.where(
+        emis_arr < 51_126, 10.0,
+        np.where(emis_arr < 235_483.5677, 16.67,
+                 np.where(emis_arr < 1_212_860.6667, 23.33, 40.0))
+    )
+
+    markers = list(zip(lat_arr.tolist(), lon_arr.tolist(), radius_arr.tolist(), id_list, type_list))
+
     processing_time = timeit.default_timer() - t0_processing
     conn.close()
 
