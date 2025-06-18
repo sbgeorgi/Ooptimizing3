@@ -13,6 +13,8 @@ import sqlite3
 import timeit
 import random
 import numpy as np
+import ctypes
+import subprocess
 from collections import defaultdict, Counter # Kept for potential future hypotheses
 import sys
 
@@ -89,6 +91,21 @@ def _radius(e: float) -> float:
     if e < 235_483.5677: return 16.67
     if e < 1_212_860.6667: return 23.33
     return 40.0
+
+_so_path = os.path.join(os.path.dirname(__file__), 'radius.so')
+if not os.path.exists(_so_path):
+    # compile C extension on the fly
+    c_path = os.path.join(os.path.dirname(__file__), 'radius.c')
+    cmd = ['gcc', '-shared', '-O3', '-fPIC', c_path, '-o', _so_path]
+    subprocess.run(cmd, check=True)
+_rad_lib = ctypes.CDLL(_so_path)
+_rad_lib.calc_radius.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.c_size_t]
+
+def _radius_c(emis_arr: np.ndarray) -> np.ndarray:
+    out = np.empty_like(emis_arr)
+    c_double_p = ctypes.POINTER(ctypes.c_double)
+    _rad_lib.calc_radius(emis_arr.ctypes.data_as(c_double_p), out.ctypes.data_as(c_double_p), emis_arr.size)
+    return out
 
 # NOTE: The create_marker_data function has been intentionally removed.
 # Its logic has been inlined into run_full_benchmark for performance.
@@ -176,11 +193,7 @@ def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filter
     lat_arr += jitter
     lon_arr += jitter
 
-    radius_arr = np.where(
-        emis_arr < 51_126, 10.0,
-        np.where(emis_arr < 235_483.5677, 16.67,
-                 np.where(emis_arr < 1_212_860.6667, 23.33, 40.0))
-    )
+    radius_arr = _radius_c(emis_arr)
 
     markers = list(zip(lat_arr.tolist(), lon_arr.tolist(), radius_arr.tolist(), id_list, type_list))
 
