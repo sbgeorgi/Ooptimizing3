@@ -69,3 +69,17 @@ Hypothesis 3 (numba jit) time: 0.5865584
 Hypothesis 4 (tuple markers) time: 0.0889705
 Hypothesis 5 (numpy vectorization) time: 0.0288453  <-- New champion
 Champion average total time after Gen1: 0.0288453
+Generated code
+--- Tournament 2 Start ---
+Generation 0:
+New Baseline Champion: champion_code.py
+Average Time: 0.0269648
+Use code with caution.
+Generation 1:
+Champion at start time: 0.0269648
+Hypothesis 1 (Numba JIT radius): 0.2102747
+Hypothesis 2 (multiprocessing row processing): 0.1240024
+Hypothesis 3 (lru_cache geolocation parsing): 0.0255109
+Hypothesis 4 (numpy unique counts): 0.0468077
+Hypothesis 5 (ctypes C radius): 0.0252827  <-- New champion
+Champion average total time after Gen1: 0.0252827
