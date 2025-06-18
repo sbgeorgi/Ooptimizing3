@@ -83,3 +83,78 @@ Hypothesis 3 (lru_cache geolocation parsing): 0.0255109
 Hypothesis 4 (numpy unique counts): 0.0468077
 Hypothesis 5 (ctypes C radius): 0.0252827  <-- New champion
 Champion average total time after Gen1: 0.0252827
+\n--- Tournament 2 DB Focus Start ---
+Generation 0:
+New Baseline Champion: champion_code.py
+Average Time: 0.0240844
+\nGeneration 1:
+Hypothesis 1 (select columns) time: 0.0237909
+Hypothesis 2 (fetchmany streaming) time: 0.12349370000000001
+Hypothesis 3 (mmap_size 512MB) time: 0.0240242
+Hypothesis 4 (fromiter arrays) time: 0.024256299999999998
+Hypothesis 5 (cache_size 512MB) time: 0.021233699999999998  <-- New champion
+Champion average total time after Gen1: 0.021233699999999998
+\nGeneration 2:
+Hypothesis 1 (select columns) time: 0.0255749
+Hypothesis 2 (select columns + fetchmany) time: 0.043161599999999994
+Hypothesis 3 (mmap 512MB + fetchmany + columns) time: 0.04803059999999999
+Hypothesis 4 (fetchmany only) time: 0.1290196
+Hypothesis 5 (fromiter arrays) time: 0.0253307
+No improvement over champion time 0.021233699999999998.
+\nGeneration 3:
+Hypothesis 1 (mmap 512MB) time: 0.02652050000000001
+Hypothesis 2 (cache_size 1GB) time: 0.0251141
+Hypothesis 3 (columns+1GB cache+512MB mmap) time: 0.023506500000000003
+Hypothesis 4 (locking_mode EXCLUSIVE) time: 0.027005099999999994
+Hypothesis 5 (fromiter arrays) time: 0.024599999999999993
+No improvement over champion time 0.021233699999999998.
+\nGeneration 4:
+Hypothesis 1 (columns + ORDER BY) time: 0.03217589999999999
+Hypothesis 2 (mmap 1GB) time: 0.021376400000000004
+Hypothesis 3 (PRAGMA optimize) time: 0.0254552
+Hypothesis 4 (fromiter arrays) time: 0.024145599999999996
+Hypothesis 5 (numpy unique counts) invalid
+No improvement over champion time 0.021233699999999998.
+\nGeneration 5:
+Hypothesis 1 (isolation_level None) time: 0.021271099999999998
+Hypothesis 2 (cache_size 256MB) time: 0.022201400000000003
+Hypothesis 3 (disable mmap) time: 0.0246888
+Hypothesis 4 (remove jitter) time: 0.015449099999999999
+Hypothesis 5 (fromiter+jitter removal) time: 0.0145235  <-- New champion
+Champion average total time after Gen5: 0.0145235
+\nGeneration 6:
+Hypothesis 1 (select columns) time: 0.015179799999999999
+Hypothesis 2 (select columns + fetchmany) time: 0.035550399999999996
+Hypothesis 3 (busy_timeout) time: 0.0127465  <-- New champion
+Hypothesis 4 (array conversion) time: 0.014049199999999998
+Hypothesis 5 (batch size 8192) time: 0.012916
+Champion average total time after Gen6: 0.0127465
+\nGeneration 7:
+Hypothesis 1 (mmap 512MB + busy_timeout) time: 0.0125572
+Hypothesis 2 (busy_timeout + cache 1GB) time: 0.014332600000000001
+Hypothesis 3 (reverse_unordered_selects) time: 0.0126636
+Hypothesis 4 (asarray arrays) time: 0.013341400000000003
+Hypothesis 5 (select columns + busy_timeout) time: 0.012036500000000002  <-- New champion
+Champion average total time after Gen7: 0.012036500000000002
+\nGeneration 8:
+Hypothesis 1 (busy_timeout 10000) time: 0.013697
+Hypothesis 2 (ORDER BY) time: 0.0227392
+Hypothesis 3 (synchronous NORMAL) time: 0.017525599999999995
+Hypothesis 4 (float32 arrays) invalid
+Hypothesis 5 (cache_size 1GB) time: 0.013482999999999998
+No improvement over champion time 0.012036500000000002.
+\nGeneration 9:
+Hypothesis 1 (mmap 512MB) time: 0.0143308
+Hypothesis 2 (cache_size 1GB) time: 0.016251999999999996
+Hypothesis 3 (PRAGMA optimize) time: 0.017789
+Hypothesis 4 (ORDER BY) time: 0.0268532
+Hypothesis 5 (Counter counts) invalid
+No improvement over champion time 0.012036500000000002.
+\nGeneration 10:
+Hypothesis 1 (busy_timeout 7000) time: 0.012022800000000002  <-- New champion
+Hypothesis 2 (mmap512MB, timeout 7000) time: 0.015144099999999999
+Hypothesis 3 (isolation_level None) time: 0.014300700000000003
+Hypothesis 4 (map parsing) time: 0.018342700000000003
+Hypothesis 5 (page size 8192) time: 0.0138512
+Champion average total time after Gen10: 0.012022800000000002
+\nTournament 2 Final Report:\nFinal champion time: 0.012022800000000002

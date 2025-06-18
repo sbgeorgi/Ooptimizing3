@@ -1,27 +1,16 @@
-# AI Mastermind Agent Rules - Tournament 2
-
+AI Mastermind Agent Rules - Tournament 2 (DB Focus)
 Core Mandate: I will complete a minimum of 10 generations. I will not stop before Generation 10 is complete. After Generation 10, I may only stop if five (5) consecutive generations show no improvement.
 
-Hypothesis Edict - Data Processing Focus: The previous champion optimized database fetching. Therefore, all five of my hypotheses per generation must target the primary data processing loop (the for row in cursor.execute(...) block) and the create_marker_data function. Trivial changes are forbidden. Hypotheses must be ambitious and well-reasoned.
+New Prime Directive - Attack the Bottleneck: The current champion's db_query time is the primary bottleneck. My main goal is to reduce this time.
 
-Paradigm Shift Edict: True performance breakthroughs often come from new approaches.[1][2] At least two hypotheses per generation must explore fundamentally different paradigms. Examples include:
+Database Interaction Edict: At least three (3) hypotheses per generation must directly target database interaction. Trivial changes are forbidden. Hypotheses must be ambitious and explore strategies such as:
 
-Parallel Processing: Utilizing multiprocessing or concurrent.futures to distribute the workload across multiple CPU cores.[3][4][5]
+SQL Query Optimization: Modify the build_filter_query function to generate more efficient SQL. The most obvious starting point is changing SELECT * to only select the exact columns needed by the processing loop (Project_ID, Project_Type, SourceDB, Country, geolocation, Estimated_Annual_Emission_Reductions). This reduces data transfer from the DB to the Python process.
 
-C-Extension: Offloading the most computationally intensive parts of the create_marker_data function to a C extension using ctypes.[6][7][8]
+Data Fetching Strategy: The current code uses cursor.fetchall(), which loads all results into memory at once. A key paradigm shift to test is replacing this with a loop over cursor.fetchmany(batch_size). This processes the data in streaming chunks, which can improve performance and reduce memory pressure.
 
-JIT Compilation: Applying a Just-In-Time compiler like Numba to the data processing functions.[2][9]
+Connection & PRAGMA Tuning: Experiment with the PRAGMA settings in PRAGMA_SCRIPT_RO. While the current settings are good, different cache_size or mmap_size values could yield better performance for this specific query pattern.
 
-Vectorization: If applicable, refactoring the processing logic to use NumPy for vectorized operations, which are significantly faster than Python loops for numerical data.[9][10]
+Python Processing Edict: Up to two (2) hypotheses per generation may still target the Python data processing loop that begins after the data is fetched (the for row in rows: block). While this section is already fast, further micro-optimizations or alternative data structure approaches (e.g., different NumPy vectorization techniques) are permissible.
 
-Advanced Optimization Edict: At least two hypotheses per generation must explore advanced, in-process optimization techniques, such as:
-
-Algorithmic and Data Structure Improvements: Replace existing data structures with more performant alternatives (e.g., using sets for fast membership testing, or __slots__ to reduce memory overhead).[1][11][12]
-
-Function Caching: Employ memoization with functools.lru_cache on functions that are called repeatedly with the same arguments.[11][13]
-
-I/O and Deserialization Optimization: Experiment with faster JSON parsing libraries like orjson if applicable.
-
-Benchmarking Integrity: All benchmark runs via run_and_validate.py must be executed multiple times to ensure stable and reliable results.[14][15] The average time will be the official metric for comparison. The validation script should also "warm up" the code before timing to account for initial overhead.[16]
-
-Creative Exploration: Be innovative. Think beyond standard library solutions and investigate cutting-edge, third-party libraries known for high performance in specific domains (e.g., data manipulation, numerical computation).
+Benchmarking Integrity: All benchmark runs via run_and_validate.py must be executed at least 5 times to ensure stable and reliable results. The average time is the official metric.

@@ -31,8 +31,9 @@ PRAGMA_SCRIPT_RO = """
     PRAGMA journal_mode   = OFF;
     PRAGMA synchronous    = OFF;
     PRAGMA temp_store     = MEMORY;
-    PRAGMA cache_size     = -196608;      /* target ~192 MB */
+    PRAGMA cache_size     = -524288;      /* target ~512 MB */
     PRAGMA mmap_size      = 268435456;   /* target 256 MB */
+    PRAGMA busy_timeout   = 7000;
 """
 
 # --- Table and Column Names (Must match your schema) ---
@@ -70,7 +71,16 @@ def get_db(db_path: str, pragma_script: str) -> sqlite3.Connection:
 
 def build_filter_query(filters: dict) -> tuple[str, list]:
     """Builds a SQL query from a filter dictionary."""
-    base_query = f"SELECT * FROM `{PROJECT_TABLE_NAME}`"
+    columns = [
+        PROJ_ID,
+        PROJ_TYPE,
+        PROJ_SOURCE,
+        PROJ_COUNTRY,
+        PROJ_GEO,
+        PROJ_EMISSIONS,
+    ]
+    col_list = ','.join(f'`{c}`' for c in columns)
+    base_query = f"SELECT {col_list} FROM `{PROJECT_TABLE_NAME}`"
     where_conditions = []
     params = []
 
@@ -186,12 +196,10 @@ def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filter
         if country_idx is not None and (val := row[country_idx]):
             country_counts[val] = country_counts.get(val, 0) + 1
 
-    lat_arr = np.array(lat_list)
-    lon_arr = np.array(lon_list)
-    emis_arr = np.array(emis_list)
-    jitter = np.random.random(len(lat_arr)) * 2e-4 - 1e-4
-    lat_arr += jitter
-    lon_arr += jitter
+    lat_arr = np.fromiter(lat_list, dtype=float, count=len(lat_list))
+    lon_arr = np.fromiter(lon_list, dtype=float, count=len(lon_list))
+    emis_arr = np.fromiter(emis_list, dtype=float, count=len(emis_list))
+    # removed jitter for performance
 
     radius_arr = _radius_c(emis_arr)
 
