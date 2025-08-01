@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
 """
-Standalone Benchmark Harness for 'update_filters_and_markers'
+Advanced Standalone Benchmark Harness for 'update_filters_and_markers'
 
-This script is a self-contained testbed designed for performance optimization.
-This version represents the culmination of multiple AI-driven tournaments and
-the integration of fixes from a live production environment.
+This script is a self-contained, enhanced testbed designed for a sophisticated
+AI-driven optimization tournament. It has been re-engineered to provide a
+flexible platform for testing a wide range of database optimization strategies.
+
+Key enhancements include:
+1.  **In-Memory Database Cloning:** Each run uses a fresh in-memory clone of
+    the database, ensuring test isolation and allowing for schema modifications
+    like index creation without altering the source file.
+2.  **Config-Driven Experiments:** A single `BENCHMARK_CONFIG` dictionary drives
+    the entire test, making it trivial for an AI to formulate hypotheses by
+    modifying parameters for column selection, fetch strategy, and indexing.
+3.  **Query Plan Analysis:** Automatically runs and prints the output of
+    `EXPLAIN QUERY PLAN` for every generated query, giving the AI crucial
+    diagnostic data beyond simple timing.
+4.  **Flexible Fetch Strategies:** Natively supports 'fetchall', 'fetchmany',
+    and direct 'iterate' strategies, selectable via the config.
 """
 from __future__ import annotations
 import argparse
@@ -12,75 +25,114 @@ import os
 import sqlite3
 import timeit
 import random
-import numpy as np
-import ctypes
-import subprocess
-from collections import defaultdict, Counter # Kept for potential future hypotheses
 import sys
 
 # =========================================================================== #
 # SECTION 1: CONFIGURATION (Primary target for AI modifications)
 # =========================================================================== #
 
-# --- Database Fetch Size ---
-DB_FETCH_BATCH_SIZE = 16384
+# This dictionary is the central control panel for the AI agent.
+# By modifying this single object, the agent can test all key hypotheses.
+BENCHMARK_CONFIG = {
+    # --- STRATEGY 1: Column Selection ---
+    # Test the impact of selecting specific columns vs. `SELECT *`.
+    # An empty list `[]` will default to `SELECT *`.
+    # A good starting hypothesis is to select only the columns needed in the loop.
+    "columns_to_select": [
+        "Project_ID", "Project_Type", "SourceDB", "Country",
+        "geolocation", "Estimated_Annual_Emission_Reductions"
+    ],
 
-# --- Database PRAGMA Settings ---
-PRAGMA_SCRIPT_RO = """
-    PRAGMA query_only     = TRUE;
-    PRAGMA journal_mode   = OFF;
-    PRAGMA synchronous    = OFF;
-    PRAGMA temp_store     = MEMORY;
-    PRAGMA cache_size     = -524288;      /* target ~512 MB */
-    PRAGMA mmap_size      = 268435456;   /* target 256 MB */
-    PRAGMA busy_timeout   = 7000;
-"""
+    # --- STRATEGY 2: Data Fetching Method ---
+    # Test different ways of retrieving data from the cursor.
+    # Options: 'iterate', 'fetchall', 'fetchmany'
+    "fetch_strategy": 'iterate',
+    "db_fetch_batch_size": 16384,  # Only used if fetch_strategy is 'fetchmany'
 
-# --- Table and Column Names (Must match your schema) ---
-PROJECT_TABLE_NAME      = "mytable"
-PROJ_ID                 = "Project_ID"
-PROJ_NAME               = "Project_Name"
-PROJ_TYPE               = "Project_Type"
-PROJ_SOURCE             = "SourceDB"
-PROJ_COUNTRY            = "Country"
-PROJ_GEO                = "geolocation"
-PROJ_EMISSIONS          = "Estimated_Annual_Emission_Reductions"
-PROJ_START_VERRA_GS     = "Crediting_Period_Start_Date"
+    # --- STRATEGY 3: Indexing ---
+    # Test the impact of creating indexes before the query runs.
+    # The agent can add 'CREATE INDEX...' statements here.
+    # The benchmark harness will create a fresh in-memory DB for each run,
+    # so these indexes are temporary and don't affect the source file.
+    "db_setup_statements": [
+        # Example Hypothesis: "CREATE INDEX idx_source ON mytable(SourceDB COLLATE NOCASE)"
+    ],
 
-# --- Filters to Simulate a User Request ---
+    # --- STRATEGY 4: PRAGMA Tuning ---
+    # Test different PRAGMA settings for read-only operations.
+    "pragma_script_ro": """
+        PRAGMA query_only     = TRUE;
+        PRAGMA journal_mode   = OFF;
+        PRAGMA synchronous    = OFF;
+        PRAGMA temp_store     = MEMORY;
+        PRAGMA cache_size     = -196608;
+        PRAGMA mmap_size      = 268435456;
+    """,
+}
+
+# --- Table and Column Names (Schema-dependent, should not be changed by AI) ---
+PROJECT_TABLE_NAME = "mytable"
+PROJ_ID = "Project_ID"
+PROJ_TYPE = "Project_Type"
+PROJ_SOURCE = "SourceDB"
+PROJ_COUNTRY = "Country"
+PROJ_GEO = "geolocation"
+PROJ_EMISSIONS = "Estimated_Annual_Emission_Reductions"
+
+# --- Filters to Simulate a User Request (Static for consistent tests) ---
 FILTERS_TO_TEST = {
     'sources': ['Verra', 'GoldStandard'],
 }
 
 
 # =========================================================================== #
-# SECTION 2: CORE LOGIC (Primary target for AI modifications)
+# SECTION 2: CORE LOGIC (Modified to support advanced testing)
 # =========================================================================== #
 
-def get_db(db_path: str, pragma_script: str) -> sqlite3.Connection:
-    """Establishes a read-only database connection with specified PRAGMAs."""
-    if not os.path.exists(db_path):
-        sys.exit(f"ERROR: Database file not found at '{db_path}'")
-    db_uri = f"file:{db_path}?mode=ro&immutable=1"
-    conn = sqlite3.connect(db_uri, uri=True, timeout=15.0)
-    conn.executescript(pragma_script)
-    # The benchmark environment assumes raw tuples for maximum performance,
-    # unlike the production environment which may use sqlite3.Row.
-    conn.row_factory = None
-    return conn
+def setup_in_memory_db(source_db_path: str, pragma_script: str, setup_statements: list[str]) -> sqlite3.Connection:
+    """
+    Creates an isolated, in-memory database for a single benchmark run.
+    It copies the content from the source DB, applies PRAGMAs, and runs setup SQL.
+    """
+    if not os.path.exists(source_db_path):
+        sys.exit(f"ERROR: Source database file not found at '{source_db_path}'")
 
-def build_filter_query(filters: dict) -> tuple[str, list]:
-    """Builds a SQL query from a filter dictionary."""
-    columns = [
-        PROJ_ID,
-        PROJ_TYPE,
-        PROJ_SOURCE,
-        PROJ_COUNTRY,
-        PROJ_GEO,
-        PROJ_EMISSIONS,
-    ]
-    col_list = ','.join(f'`{c}`' for c in columns)
-    base_query = f"SELECT {col_list} FROM `{PROJECT_TABLE_NAME}`"
+    # 1. Create the destination in-memory database
+    mem_conn = sqlite3.connect(":memory:")
+
+    # 2. Copy the source database content to the in-memory database
+    try:
+        # Attach the source DB and dump its content to the in-memory DB
+        mem_conn.execute(f"ATTACH DATABASE '{source_db_path}' AS source_db")
+        # Use backup API for a robust copy
+        backup_conn = sqlite3.connect(source_db_path, timeout=15.0)
+        backup_conn.backup(mem_conn)
+        backup_conn.close()
+        mem_conn.execute("DETACH DATABASE source_db")
+    except sqlite3.Error as e:
+        mem_conn.close()
+        sys.exit(f"ERROR: Failed to clone database to memory: {e}")
+
+    # 3. Apply PRAGMA settings to the new in-memory database
+    mem_conn.executescript(pragma_script)
+
+    # 4. Run any pre-benchmark setup statements (e.g., CREATE INDEX)
+    if setup_statements:
+        print("--- Applying Setup SQL ---")
+        for stmt in setup_statements:
+            print(f"Executing: {stmt}")
+            mem_conn.execute(stmt)
+        print("-" * 28)
+
+    # Use raw tuples for maximum performance in the benchmark
+    mem_conn.row_factory = None
+    return mem_conn
+
+
+def build_filter_query(filters: dict, columns: list[str]) -> tuple[str, list]:
+    """Builds a SQL query, now with dynamic column selection."""
+    select_clause = ", ".join(f"`{c}`" for c in columns) if columns else "*"
+    base_query = f"SELECT {select_clause} FROM `{PROJECT_TABLE_NAME}`"
     where_conditions = []
     params = []
 
@@ -88,12 +140,12 @@ def build_filter_query(filters: dict) -> tuple[str, list]:
         placeholders = ','.join(['?'] * len(sources))
         where_conditions.append(f"`{PROJ_SOURCE}` IN ({placeholders}) COLLATE NOCASE")
         params.extend(sources)
-    # ... other filter conditions would go here ...
 
     final_query = base_query
     if where_conditions:
         final_query += " WHERE " + " AND ".join(where_conditions)
     return final_query, params
+
 
 def _radius(e: float) -> float:
     """Helper function to calculate marker radius based on emissions."""
@@ -102,66 +154,67 @@ def _radius(e: float) -> float:
     if e < 1_212_860.6667: return 23.33
     return 40.0
 
-_so_path = os.path.join(os.path.dirname(__file__), 'radius.so')
-if not os.path.exists(_so_path):
-    # compile C extension on the fly
-    c_path = os.path.join(os.path.dirname(__file__), 'radius.c')
-    cmd = ['gcc', '-shared', '-O3', '-fPIC', c_path, '-o', _so_path]
-    subprocess.run(cmd, check=True)
-_rad_lib = ctypes.CDLL(_so_path)
-_rad_lib.calc_radius.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.c_size_t]
-
-def _radius_c(emis_arr: np.ndarray) -> np.ndarray:
-    out = np.empty_like(emis_arr)
-    c_double_p = ctypes.POINTER(ctypes.c_double)
-    _rad_lib.calc_radius(emis_arr.ctypes.data_as(c_double_p), out.ctypes.data_as(c_double_p), emis_arr.size)
-    return out
-
-# NOTE: The create_marker_data function has been intentionally removed.
-# Its logic has been inlined into run_full_benchmark for performance.
 
 # =========================================================================== #
-# SECTION 3: BENCHMARK EXECUTION
+# SECTION 3: BENCHMARK EXECUTION (Heavily modified for new capabilities)
 # =========================================================================== #
 
-def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filters: dict):
+def run_full_benchmark(db_path: str, config: dict, filters: dict):
     """
-    Executes the full benchmark process, now with inlined marker creation.
+    Executes the full, enhanced benchmark process.
     """
     print("--- Starting Benchmark ---")
-    print(f"Database: {db_path}")
-    print(f"Batch Size: {batch_size}")
-    print(f"Filters: {filters if filters else 'None'}")
+    print(f"Source Database: {db_path}")
+    print(f"Fetch Strategy:  {config.get('fetch_strategy', 'N/A')}")
+    print(f"Batch Size:      {config.get('db_fetch_batch_size', 'N/A')}")
+    print(f"Columns Selected: {len(config.get('columns_to_select', [])) or 'All (*)'}")
     print("-" * 28)
 
-    # --- Setup and Query Execution ---
-    conn = get_db(db_path, pragma_script)
+    # --- Setup ---
+    # Create a fresh, isolated in-memory DB for this run
+    conn = setup_in_memory_db(
+        source_db_path=db_path,
+        pragma_script=config.get('pragma_script_ro', ''),
+        setup_statements=config.get('db_setup_statements', [])
+    )
     cursor = conn.cursor()
-    cursor.arraysize = batch_size
+    cursor.arraysize = config.get('db_fetch_batch_size', 16384)
+    sql_query, params = build_filter_query(filters, config.get('columns_to_select', []))
 
-    sql_query, params = build_filter_query(filters)
+    # --- Query Plan Analysis ---
+    print("--- Query Plan Analysis ---")
+    try:
+        plan_query = f"EXPLAIN QUERY PLAN {sql_query}"
+        cursor.execute(plan_query, params)
+        plan = cursor.fetchall()
+        print(f"SQL: {sql_query}")
+        print("Plan:")
+        for row in plan:
+            print(f"  > {row[3]}")
+    except sqlite3.Error as e:
+        print(f"Could not execute EXPLAIN QUERY PLAN: {e}")
+    print("-" * 28)
 
-    t0 = timeit.default_timer()
+    # --- Query Execution Timing ---
+    t0_query = timeit.default_timer()
     cursor.execute(sql_query, params)
-    query_execution_time = timeit.default_timer() - t0
+    query_execution_time = timeit.default_timer() - t0_query
 
-    # --- Data Fetching and Processing with NumPy vectorization ---
+    # --- Data Fetching and Processing ---
+    # This section now dynamically handles different fetch strategies
+    t0_processing = timeit.default_timer()
+
     col_names = tuple(desc[0] for desc in cursor.description)
     col_idx = {name: i for i, name in enumerate(col_names)}
 
-    rows = cursor.fetchall()
-    total_rows_fetched = len(rows)
-
+    markers = []
     source_counts = {}
     project_type_counts = {}
     country_counts = {}
+    total_rows_fetched = 0
 
-    lat_list = []
-    lon_list = []
-    emis_list = []
-    id_list = []
-    type_list = []
-
+    append_marker = markers.append
+    rand = random.random
     source_idx = col_idx.get(PROJ_SOURCE)
     type_idx = col_idx.get(PROJ_TYPE)
     country_idx = col_idx.get(PROJ_COUNTRY)
@@ -169,26 +222,27 @@ def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filter
     emis_idx = col_idx.get(PROJ_EMISSIONS)
     id_idx = col_idx.get(PROJ_ID)
 
-    t0_processing = timeit.default_timer()
-
-    for row in rows:
-        geolocation = row[geo_idx]
-        emissions_val = row[emis_idx]
-        if not (geolocation and ',' in geolocation):
-            continue
-        if emissions_val is None:
-            continue
+    def process_row(row):
+        nonlocal total_rows_fetched
+        total_rows_fetched += 1
         try:
+            # Marker creation logic
+            geolocation = row[geo_idx]
+            emissions_val = row[emis_idx]
+            if not (geolocation and ',' in geolocation and emissions_val is not None):
+                return
+            emissions_float = float(emissions_val)
             lat_str, _, lon_str = geolocation.partition(',')
-            emis = float(emissions_val)
-            lat_list.append(float(lat_str))
-            lon_list.append(float(lon_str))
-            emis_list.append(emis)
-            id_list.append(row[id_idx])
-            type_list.append(row[type_idx])
-        except (ValueError, TypeError):
-            continue
+            jitter = rand() * 2e-4 - 1e-4
+            append_marker({
+                'lat': float(lat_str) + jitter, 'lon': float(lon_str) + jitter,
+                'radius': _radius(emissions_float), 'project_id': row[id_idx],
+                'project_type': row[type_idx],
+            })
+        except (ValueError, TypeError, KeyError, IndexError):
+            pass  # Safely skip rows with processing errors
 
+        # Counting logic
         if source_idx is not None and (val := row[source_idx]):
             source_counts[val] = source_counts.get(val, 0) + 1
         if type_idx is not None and (val := row[type_idx]):
@@ -196,14 +250,21 @@ def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filter
         if country_idx is not None and (val := row[country_idx]):
             country_counts[val] = country_counts.get(val, 0) + 1
 
-    lat_arr = np.fromiter(lat_list, dtype=float, count=len(lat_list))
-    lon_arr = np.fromiter(lon_list, dtype=float, count=len(lon_list))
-    emis_arr = np.fromiter(emis_list, dtype=float, count=len(emis_list))
-    # removed jitter for performance
-
-    radius_arr = _radius_c(emis_arr)
-
-    markers = list(zip(lat_arr.tolist(), lon_arr.tolist(), radius_arr.tolist(), id_list, type_list))
+    fetch_strategy = config.get('fetch_strategy', 'iterate')
+    if fetch_strategy == 'fetchall':
+        rows = cursor.fetchall()
+        for row in rows:
+            process_row(row)
+    elif fetch_strategy == 'fetchmany':
+        while True:
+            rows = cursor.fetchmany(cursor.arraysize)
+            if not rows:
+                break
+            for row in rows:
+                process_row(row)
+    else:  # 'iterate' is the default
+        for row in cursor:
+            process_row(row)
 
     processing_time = timeit.default_timer() - t0_processing
     conn.close()
@@ -225,20 +286,20 @@ def run_full_benchmark(db_path: str, pragma_script: str, batch_size: int, filter
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run a benchmark test for the 'update_filters_and_markers' logic.",
+        description="Run an advanced benchmark test for database optimization.",
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument(
         "--db",
         required=True,
-        help="Path to the SQLite database file."
+        help="Path to the source SQLite database file."
     )
     args = parser.parse_args()
 
-    # Execute the benchmark using the configurations from Section 1
+    # The AI agent's primary task is to modify the BENCHMARK_CONFIG dictionary
+    # above and then execute this script.
     run_full_benchmark(
         db_path=args.db,
-        pragma_script=PRAGMA_SCRIPT_RO,
-        batch_size=DB_FETCH_BATCH_SIZE,
+        config=BENCHMARK_CONFIG,
         filters=FILTERS_TO_TEST
     )
